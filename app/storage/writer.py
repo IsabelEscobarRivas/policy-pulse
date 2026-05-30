@@ -12,14 +12,6 @@ def save_document(
 ) -> Tuple[RegulatoryDocument, bool]:
     content_hash = compute_hash(normalized["body"])
 
-    existing = (
-        db.query(RegulatoryDocument)
-        .filter(RegulatoryDocument.content_hash == content_hash)
-        .first()
-    )
-    if existing:
-        return existing, False
-
     document = RegulatoryDocument(
         source_id=source_id,
         external_url=normalized["source_url"],

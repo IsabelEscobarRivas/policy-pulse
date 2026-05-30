@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from sqlalchemy.orm import Session
 
+from app.models import RegulatoryChange
 from app.models.regulatory_document import RegulatoryDocument
 from app.models.regulatory_source import RegulatorySource
 from app.models.retrieval_snapshot import RetrievalSnapshot
@@ -9,6 +10,7 @@ from app.storage.database import SessionLocal
 
 
 def seed_sources(db: Session) -> None:
+    db.query(RegulatoryChange).delete()
     db.query(RetrievalSnapshot).delete()
     db.query(RegulatoryDocument).delete()
     db.query(RegulatorySource).delete()
