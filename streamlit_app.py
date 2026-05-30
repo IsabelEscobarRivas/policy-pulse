@@ -109,10 +109,21 @@ header {visibility: hidden;}
     color: #1e293b;
     margin-bottom: 0.3rem;
 }
+.card-topic-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    margin-bottom: 0.3rem;
+}
 .card-topic {
     font-size: 0.92rem;
     color: #64748b;
     line-height: 1.5;
+}
+.card-button-row {
+    margin-top: 1rem;
 }
 
 /* Expanded panel */
@@ -343,7 +354,7 @@ def generate_paragraph(headline: str, context: str, visa: str, origin: str) -> s
 
         prompt = f"""You are a senior regulatory intelligence analyst and immigration law specialist.
 
-An immigration attorney needs a comprehensive analytical paragraph for their client file.
+An immigration attorney needs concise filing context bullets for their client file.
 
 REGULATORY INTELLIGENCE:
 Headline: {headline}
@@ -351,14 +362,21 @@ Visa Category: {visa}
 National Origin: {origin}
 Regulatory Context: {context[:1200]}
 
-Write a comprehensive analytical paragraph (6-8 sentences) that:
-1. States the specific regulatory development and its effective date/timeframe
-2. Analyzes the direct impact on {visa} applicants from {origin}
-3. Identifies specific evidentiary or procedural implications
-4. Addresses timing considerations and filing windows
-5. Notes any comparative movement (forward/backward/retrogression)
-6. Recommends specific documentation or monitoring actions
-7. References the regulatory source (Visa Bulletin, Federal Register, etc.)
+Format the output as 5-7 concise bullet points, each 1-2 sentences maximum.
+Each bullet point should cover ONE specific fact or action item.
+Use this structure:
+- [Key regulatory fact with specific date/magnitude]
+- [Who is affected and how]
+- [Filing eligibility determination]
+- [Filing methodology note]
+- [Federal Register status]
+- [Immediate action required]
+- [Monitoring recommendation]
+
+Start each bullet with •
+No markdown headers.
+No dense paragraphs.
+Keep each bullet under 40 words.
 
 Requirements:
 - Formal legal correspondence register
@@ -420,13 +438,19 @@ def card_classes(urgency: str) -> tuple[str, str]:
 
 def render_topic_card(topic: dict) -> str:
     card_class, urgency_class, urgency_label = card_classes(topic.get("urgency", "Low"))
-    visa = topic.get("visa_category", "Unknown")
+    visa_cat = topic.get("visa_category", "Unknown")
+    parts = visa_cat.split(" — ", 1)
+    main_cat = parts[0]
+    descriptor = parts[1] if len(parts) > 1 else ""
     topic_text = topic.get("topic", "")
+    descriptor_html = ""
+    if descriptor:
+        descriptor_html = f'  <div class="card-topic-label">{descriptor}</div>\n'
     return f"""
 <div class="{card_class}">
   <div class="card-urgency {urgency_class}">{urgency_label} Priority</div>
-  <div class="card-visa">{visa}</div>
-  <div class="card-topic">{topic_text}</div>
+  <div class="card-visa">{main_cat}</div>
+{descriptor_html}  <div class="card-topic">{topic_text}</div>
 </div>
 """
 
@@ -455,9 +479,7 @@ if not backend_available():
         "Start the API with `uvicorn main:app --reload`."
     )
 
-filter_col1, filter_col2, filter_col3, filter_col4, col_refresh = st.columns(
-    [3, 2, 2, 2, 2]
-)
+filter_col1, filter_col2, filter_col3, col_refresh = st.columns([2, 2, 2, 1])
 
 with filter_col1:
     period = st.selectbox(
@@ -479,8 +501,9 @@ with filter_col3:
     )
 with col_refresh:
     generate = st.button(
-        "⟳ Generate Report",
+        "Generate Report",
         use_container_width=True,
+        type="primary",
         help="Retrieve latest regulatory data and generate intelligence report",
     )
 
@@ -545,6 +568,27 @@ st.markdown(
 topics = brief.get("active_topics") or []
 st.markdown('<div class="section-title">Intelligence Feed</div>', unsafe_allow_html=True)
 
+st.markdown(
+    """
+<div style="display:flex; gap:1.5rem; margin-bottom:1rem;
+     font-size:0.78rem;">
+    <span>
+        <span style="color:#dc2626; font-weight:700;">● HIGH</span>
+        <span style="color:#64748b;"> — Act this month</span>
+    </span>
+    <span>
+        <span style="color:#d97706; font-weight:700;">● MEDIUM</span>
+        <span style="color:#64748b;"> — Monitor closely</span>
+    </span>
+    <span>
+        <span style="color:#16a34a; font-weight:700;">● LOW</span>
+        <span style="color:#64748b;"> — Positive or stable</span>
+    </span>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
 if not topics:
     st.markdown(
         '<div class="expand-text">No active topics identified for current filters.</div>',
@@ -555,6 +599,7 @@ else:
     for index, topic in enumerate(topics):
         with cols[index % 3]:
             st.markdown(render_topic_card(topic), unsafe_allow_html=True)
+            st.markdown('<div class="card-button-row"></div>', unsafe_allow_html=True)
             if st.button("Analyze →", key=f"topic_btn_{index}", use_container_width=True):
                 st.session_state.selected_topic_idx = index
                 st.session_state.generated_paragraph = ""
@@ -563,7 +608,6 @@ else:
 if st.session_state.selected_topic_idx is not None and topics:
     selected = topics[st.session_state.selected_topic_idx]
     headline = selected.get("topic", "")
-    topic_description = selected.get("topic", "")
     visa = selected.get("visa_category", visa_type)
     context = "\n".join(
         filter(
@@ -583,7 +627,7 @@ if st.session_state.selected_topic_idx is not None and topics:
             '<div class="expand-panel">'
             '<div class="expand-label">Topic Analysis</div>'
             f'<div class="headline-large">{headline}</div>'
-            f'<div class="expand-text">{topic_description}</div>'
+            f'<div class="expand-text">{brief.get("visa_bulletin_status", "") or "—"}</div>'
             "</div>",
             unsafe_allow_html=True,
         )
@@ -686,3 +730,39 @@ else:
 """,
             unsafe_allow_html=True,
         )
+
+if brief.get("sources_cited"):
+    st.markdown(
+        """
+    <div style="margin-top:1.5rem; padding-top:1rem;
+         border-top:1px solid #e2e8f0;">
+    <div style="font-size:0.72rem; font-weight:700;
+         letter-spacing:0.1em; text-transform:uppercase;
+         color:#64748b; margin-bottom:0.5rem;">
+    Sources
+    </div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    for source in brief.get("sources_cited", []):
+        name = source.get("name", "")
+        date = source.get("date", "")
+        url = source.get("url", "")
+        if url:
+            st.markdown(
+                f'<div style="font-size:0.82rem; color:#64748b; '
+                f'padding:0.2rem 0;">📄 '
+                f'<a href="{url}" target="_blank" '
+                f'style="color:#2563eb;">{name}</a>'
+                f'{" — " + date if date else ""}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="font-size:0.82rem; color:#64748b; '
+                f'padding:0.2rem 0;">📄 {name}'
+                f'{" — " + date if date else ""}</div>',
+                unsafe_allow_html=True,
+            )

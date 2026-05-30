@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import re
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -159,6 +160,187 @@ def _safe_html_defaults(source_url: str) -> dict:
     }
 
 
+_BULLETIN_MONTH_RE = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December)\s+(20\d{2})\b",
+    re.IGNORECASE,
+)
+_CATEGORY_RE = re.compile(
+    r"\b(EB-[1235]|F-[1-4][AB]?|F-[12]|L-[12]|DV)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_category_label(text: str) -> str:
+    if not text:
+        return "UNKNOWN"
+    match = _CATEGORY_RE.search(text)
+    if match:
+        return match.group(1).upper()
+    cleaned = text.strip()
+    return cleaned[:40].strip() if cleaned else "UNKNOWN"
+
+
+def _extract_bulletin_period(soup) -> str:
+    candidates = []
+    if soup.title and soup.title.string:
+        candidates.append(soup.title.string)
+    h1 = soup.find("h1")
+    if h1 is not None:
+        candidates.append(h1.get_text(separator=" ", strip=True))
+    for heading in soup.find_all(["h2", "h3"], limit=20):
+        candidates.append(heading.get_text(separator=" ", strip=True))
+
+    for text in candidates:
+        match = _BULLETIN_MONTH_RE.search(text or "")
+        if match:
+            return f"{match.group(1).title()} {match.group(2)}"
+    return "UNKNOWN PERIOD"
+
+
+def _category_for_table(table) -> str:
+    caption = table.find("caption")
+    if caption is not None:
+        category = _normalize_category_label(
+            caption.get_text(separator=" ", strip=True)
+        )
+        if category != "UNKNOWN":
+            return category
+
+    for heading in table.find_all_previous(["h2", "h3"], limit=8):
+        if heading is None:
+            continue
+        text = heading.get_text(separator=" ", strip=True) or ""
+        if not text:
+            continue
+        category = _normalize_category_label(text)
+        if category != "UNKNOWN":
+            return category
+    return "UNKNOWN"
+
+
+def _column_map(header_cells: list[str]) -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    for index, cell in enumerate(header_cells):
+        lower = (cell or "").lower()
+        if "country" in lower or "chargeability" in lower:
+            mapping["country"] = index
+        elif any(
+            token in lower
+            for token in ("new date", "final action", "current", "this month", "new ")
+        ) or (lower.startswith("new") and "old" not in lower):
+            mapping["new_date"] = index
+        elif any(
+            token in lower
+            for token in ("old date", "prior", "previous", "last month")
+        ) or lower.startswith("old"):
+            mapping["old_date"] = index
+        elif any(token in lower for token in ("movement", "change", "shift")):
+            mapping["movement"] = index
+    return mapping
+
+
+def _is_header_row(cells: list[str]) -> bool:
+    if not cells:
+        return True
+    joined = " ".join(cells).lower()
+    return "country" in joined and (
+        "new" in joined or "final" in joined or "movement" in joined
+    )
+
+
+def _cells_from_row(tr) -> list[str]:
+    cells = []
+    for cell in tr.find_all(["td", "th"]) or []:
+        if cell is None:
+            continue
+        cells.append(cell.get_text(separator=" ", strip=True) or "")
+    return cells
+
+
+def _row_values(cells: list[str], col_map: dict[str, int]) -> tuple[str, str, str, str]:
+    def at(key: str, default_index: int) -> str:
+        if key in col_map and col_map[key] < len(cells):
+            return cells[col_map[key]]
+        if default_index < len(cells):
+            return cells[default_index]
+        return ""
+
+    return (
+        at("country", 0),
+        at("new_date", 1),
+        at("old_date", 2),
+        at("movement", 3),
+    )
+
+
+def _format_structured_row(
+    category: str,
+    country: str,
+    new_date: str,
+    old_date: str,
+    movement: str,
+) -> str:
+    return (
+        f"CATEGORY: {category} | COUNTRY: {country} | "
+        f"FINAL ACTION DATE: {new_date} | PRIOR DATE: {old_date} | "
+        f"MOVEMENT: {movement}"
+    )
+
+
+def _extract_table_rows(soup) -> list[str]:
+    structured_rows = []
+    for table in soup.find_all("table") or []:
+        if table is None:
+            continue
+
+        category = _category_for_table(table)
+        col_map: dict[str, int] = {}
+
+        for tr in table.find_all("tr") or []:
+            if tr is None:
+                continue
+            cells = _cells_from_row(tr)
+            if not cells or not any(cell.strip() for cell in cells):
+                continue
+
+            if _is_header_row(cells):
+                col_map = _column_map(cells)
+                continue
+
+            if not col_map and len(cells) >= 4:
+                col_map = {
+                    "country": 0,
+                    "new_date": 1,
+                    "old_date": 2,
+                    "movement": 3,
+                }
+
+            country, new_date, old_date, movement = _row_values(cells, col_map)
+            if not country.strip():
+                continue
+            if country.lower() in ("country", "chargeability"):
+                continue
+
+            structured_rows.append(
+                _format_structured_row(
+                    category,
+                    country.strip(),
+                    new_date.strip(),
+                    old_date.strip(),
+                    movement.strip(),
+                )
+            )
+
+    return structured_rows
+
+
+def _format_visa_bulletin_block(soup, rows: list[str]) -> str:
+    period = _extract_bulletin_period(soup).upper()
+    header = f"VISA BULLETIN PRIORITY DATE TABLE — {period}:\n"
+    return header + "\n".join(rows)
+
+
 def _normalize_generic_html(soup, source_url: str) -> dict:
     for tag_name in _TAGS_TO_REMOVE:
         for tag in soup.find_all(tag_name):
@@ -170,6 +352,9 @@ def _normalize_generic_html(soup, source_url: str) -> dict:
         title = soup.title.string.strip()
 
     body = soup.get_text(separator=" ", strip=True) or ""
+    table_rows = _extract_table_rows(soup)
+    if table_rows:
+        body = body + "\n\n" + _format_visa_bulletin_block(soup, table_rows)
 
     return {
         "title": title,

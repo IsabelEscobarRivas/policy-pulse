@@ -115,30 +115,46 @@ async def get_regulatory_brief(
     client_nationalities: str = "",
     active_concern: str = "",
 ):
-    documents = (
-        db.query(RegulatoryDocument)
-        .order_by(RegulatoryDocument.retrieved_at.desc())
-        .limit(5)
-        .all()
-    )
-    document_payload = [
-        {"title": doc.title or "Untitled", "content": doc.content or ""}
-        for doc in documents
-    ]
+    try:
+        logger.info(
+            f"Brief endpoint called: practice_areas={practice_areas}, "
+            f"client_nationalities={client_nationalities}"
+        )
 
-    attorney_profile = None
-    if practice_areas or client_nationalities or active_concern:
-        attorney_profile = {
-            "practice_areas": [
-                p.strip() for p in practice_areas.split(",") if p.strip()
-            ],
-            "client_nationalities": [
-                n.strip() for n in client_nationalities.split(",") if n.strip()
-            ],
-            "active_concern": active_concern.strip(),
-        }
+        documents = (
+            db.query(RegulatoryDocument)
+            .order_by(RegulatoryDocument.retrieved_at.desc())
+            .limit(5)
+            .all()
+        )
+        logger.info(f"Documents found: {len(documents)}")
 
-    return await generate_brief(document_payload, attorney_profile)
+        document_payload = [
+            {"title": doc.title or "Untitled", "content": doc.content or ""}
+            for doc in documents
+        ]
+
+        attorney_profile = None
+        if practice_areas or client_nationalities or active_concern:
+            attorney_profile = {
+                "practice_areas": [
+                    p.strip() for p in practice_areas.split(",") if p.strip()
+                ],
+                "client_nationalities": [
+                    n.strip() for n in client_nationalities.split(",") if n.strip()
+                ],
+                "active_concern": active_concern.strip(),
+            }
+
+        brief = await generate_brief(document_payload, attorney_profile)
+        logger.info(f"Brief generated: source_count={brief.get('source_count')}")
+        return brief
+    except Exception as e:
+        logger.error(f"Brief endpoint error: {type(e).__name__}: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/debug/{source_type}")

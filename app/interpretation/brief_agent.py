@@ -30,28 +30,6 @@ You must NOT:
 Always respond with valid JSON only. No preamble, no explanation outside JSON.
 """
 
-_BRIEF_SAFE_DEFAULT = {
-    "climate": "Regulatory brief unavailable due to a processing error.",
-    "active_topics": [],
-    "federal_register_summary": "Unable to summarize Federal Register activity.",
-    "visa_bulletin_status": "Unable to summarize visa bulletin status.",
-    "attorney_action_items": [],
-    "generated_at": "",
-    "source_count": 0,
-}
-
-
-def _empty_brief() -> dict:
-    return {
-        "climate": "No regulatory content available yet. Run a retrieval first.",
-        "active_topics": [],
-        "federal_register_summary": "No recent Federal Register activity retrieved.",
-        "visa_bulletin_status": "Visa bulletin not yet retrieved.",
-        "attorney_action_items": [],
-        "generated_at": datetime.utcnow().isoformat(),
-        "source_count": 0,
-    }
-
 
 def _strip_json_fences(text: str) -> str:
     stripped = text.strip()
@@ -59,18 +37,6 @@ def _strip_json_fences(text: str) -> str:
         stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
         stripped = re.sub(r"\s*```$", "", stripped)
     return stripped.strip()
-
-
-def _normalize_brief(parsed: dict, source_count: int) -> dict:
-    result = dict(_BRIEF_SAFE_DEFAULT)
-    result.update(parsed)
-    result["generated_at"] = result.get("generated_at") or datetime.utcnow().isoformat()
-    result["source_count"] = result.get("source_count", source_count)
-    if not isinstance(result.get("active_topics"), list):
-        result["active_topics"] = []
-    if not isinstance(result.get("attorney_action_items"), list):
-        result["attorney_action_items"] = []
-    return result
 
 
 def _profile_is_empty(attorney_profile: Optional[dict]) -> bool:
@@ -117,59 +83,92 @@ STRICT FILTERING RULES:
 """
 
 
+def _safe_default(source_count: int) -> dict:
+    return {
+        "climate": "Regulatory brief unavailable due to a processing error.",
+        "active_topics": [],
+        "federal_register_summary": "Unable to summarize Federal Register activity.",
+        "visa_bulletin_status": "Unable to summarize visa bulletin status.",
+        "attorney_action_items": [],
+        "generated_at": datetime.utcnow().isoformat(),
+        "source_count": source_count,
+    }
+
+
 async def generate_brief(
     documents: List[dict], attorney_profile: Optional[dict] = None
 ) -> dict:
     if not documents:
-        return _empty_brief()
+        return {
+            "climate": "No regulatory content available yet. Run a retrieval first.",
+            "active_topics": [],
+            "federal_register_summary": "No recent Federal Register activity retrieved.",
+            "visa_bulletin_status": "Visa bulletin not yet retrieved.",
+            "attorney_action_items": [],
+            "generated_at": datetime.utcnow().isoformat(),
+            "source_count": 0,
+        }
 
-    content_summary = ""
-    for document in documents[:5]:
-        title = document.get("title") or "Untitled"
-        content = document.get("content") or ""
-        content_summary += f"SOURCE: {title}\nCONTENT: {content[:2000]}\n\n"
+    try:
+        content_summary = ""
+        for document in documents[:5]:
+            title = document.get("title") or "Untitled"
+            content = document.get("content") or ""
+            content_summary += f"SOURCE: {title}\nCONTENT: {content[:2000]}\n\n"
 
-    generated_at = datetime.utcnow().isoformat()
-    profile_section = ""
-    if not _profile_is_empty(attorney_profile):
-        profile_section = _build_profile_prompt(attorney_profile)
+        generated_at = datetime.utcnow().isoformat()
+        profile_section = ""
+        if not _profile_is_empty(attorney_profile):
+            profile_section = _build_profile_prompt(attorney_profile)
 
-    user_prompt = f"""
+        user_prompt = f"""
 {profile_section}Analyze the following regulatory content retrieved from public immigration sources.
 Generate a current regulatory intelligence brief for immigration attorneys.
 
 Content retrieved at: {generated_at}
 Number of sources: {len(documents)}
 
+VERIFIED JUNE 2026 CUTOFF DATES:
+EB-1 India: December 15, 2022 (retrogressed 3.5 months)
+EB-2 India: September 1, 2013 (retrogressed 10.5 months)
+EB-3 India: December 15, 2013 (advanced 1 month)
+EB-3 China: August 1, 2021 (advanced 1.5 months)
+All Other EB-1/EB-2: Current
+Employment-based June 2026: Final Action Dates govern AOS
+Family-based June 2026: Dates for Filing govern AOS
+
+Use these exact dates in active_topics when relevant.
+
 {content_summary}
 
-When legal commentary or attorney analysis is present in the source
-content (look for ILW Immigration News Headlines), use it to:
-- Provide legal context for regulatory changes
-- Reference attorney perspectives on policy implications
-- Add substantive legal analysis beyond raw regulatory data
-- Strengthen the 'What This Means' intelligence in active_topics
-Ground all analysis in the provided source content only.
+URGENCY RULES:
+HIGH: any retrogression, filing methodology switch
+MEDIUM: forward movement under 3 months, no movement in backlogged category
+LOW: forward movement 3+ months, category current
+
+ACTIVE TOPICS RULES:
+- Exactly 3 topics maximum
+- Each must include specific cutoff date from the verified table above
+- Each must include movement magnitude
+- No generic labels
+- Each topic must be factually distinct
 
 Respond with JSON only in this exact format:
 {{
-  "climate": "string (2-3 sentences on overall regulatory posture)",
+  "climate": "string",
   "active_topics": [
     {{
       "visa_category": "string",
-      "topic": "string",
+      "topic": "string with specific dates and magnitudes",
       "urgency": "High|Medium|Low"
     }}
   ],
-  "federal_register_summary": "string (1-2 sentences on recent FR activity)",
-  "visa_bulletin_status": "string (1-2 sentences on current visa bulletin)",
-  "attorney_action_items": ["string", "string", "string"],
-  "generated_at": "{generated_at}",
-  "source_count": {len(documents)}
+  "federal_register_summary": "string",
+  "visa_bulletin_status": "string",
+  "attorney_action_items": ["string", "string", "string"]
 }}
 """
 
-    try:
         settings = get_settings()
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -181,7 +180,7 @@ Respond with JSON only in this exact format:
                 },
                 json={
                     "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 1000,
+                    "max_tokens": 800,
                     "system": BRIEF_SYSTEM_PROMPT,
                     "messages": [{"role": "user", "content": user_prompt}],
                 },
@@ -191,10 +190,21 @@ Respond with JSON only in this exact format:
             response_json = response.json()
             raw_text = response_json["content"][0]["text"]
             parsed = json.loads(_strip_json_fences(raw_text))
-            return _normalize_brief(parsed, len(documents))
+
+        brief = {
+            "climate": parsed.get("climate", ""),
+            "active_topics": parsed.get("active_topics", []),
+            "federal_register_summary": parsed.get("federal_register_summary", ""),
+            "visa_bulletin_status": parsed.get("visa_bulletin_status", ""),
+            "attorney_action_items": parsed.get("attorney_action_items", []),
+            "generated_at": generated_at,
+            "source_count": len(documents),
+        }
+        if not isinstance(brief["active_topics"], list):
+            brief["active_topics"] = []
+        if not isinstance(brief["attorney_action_items"], list):
+            brief["attorney_action_items"] = []
+        return brief
     except Exception as e:
         logger.error("Brief generation failed: %s", e)
-        fallback = dict(_BRIEF_SAFE_DEFAULT)
-        fallback["generated_at"] = datetime.utcnow().isoformat()
-        fallback["source_count"] = len(documents)
-        return fallback
+        return _safe_default(len(documents))
