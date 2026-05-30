@@ -125,6 +125,36 @@ async def debug_retrieve(
     return response
 
 
+@router.post("/test/interpretation")
+async def test_interpretation(db: Session = Depends(get_db)):
+    from app.interpretation.agent import governance_check, interpret_change
+
+    test_added = [
+        "USCIS has updated O-1A visa requirements to require stronger independent evidence.",
+        "Petitioners must now demonstrate contributions of major significance to their field.",
+        "Internal recommendation letters from direct supervisors will receive reduced weight.",
+        "Applications submitted after June 1 2026 must include at least three independent citations.",
+        "The evidentiary standard for extraordinary ability has been clarified in the policy manual.",
+    ]
+    test_removed = [
+        "Recommendation letters from colleagues are acceptable as primary evidence.",
+        "Petitioners may submit internal awards as supporting documentation.",
+    ]
+
+    interpretation, _raw_response = await interpret_change(
+        source_name="USCIS Policy Manual",
+        delta_summary="Major update to O-1A evidentiary standards detected.",
+        added_sentences=test_added,
+        removed_sentences=test_removed,
+    )
+    flagged = governance_check(interpretation)
+
+    return {
+        "interpretation": interpretation,
+        "governance_flagged": flagged,
+    }
+
+
 @router.post("/{source_type}")
 async def retrieve_source(
     source_type: str,
