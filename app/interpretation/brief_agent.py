@@ -75,10 +75,6 @@ STRICT FILTERING RULES:
   country-specific delays
 - Do NOT include information about other visa categories not selected
 - Do NOT include EB green card backlog data when attorney has filtered for H-1B
-- active_topics must ONLY contain topics relevant to the filtered visa type
-- If no specific intelligence exists for the filtered visa type in the source
-  material, explicitly state that in the climate field and return empty
-  active_topics rather than substituting other categories
 
 """
 
@@ -86,7 +82,6 @@ STRICT FILTERING RULES:
 def _safe_default(source_count: int) -> dict:
     return {
         "climate": "Regulatory brief unavailable due to a processing error.",
-        "active_topics": [],
         "federal_register_summary": "Unable to summarize Federal Register activity.",
         "visa_bulletin_status": "Unable to summarize visa bulletin status.",
         "attorney_action_items": [],
@@ -101,7 +96,6 @@ async def generate_brief(
     if not documents:
         return {
             "climate": "No regulatory content available yet. Run a retrieval first.",
-            "active_topics": [],
             "federal_register_summary": "No recent Federal Register activity retrieved.",
             "visa_bulletin_status": "Visa bulletin not yet retrieved.",
             "attorney_action_items": [],
@@ -137,35 +131,18 @@ All Other EB-1/EB-2: Current
 Employment-based June 2026: Final Action Dates govern AOS
 Family-based June 2026: Dates for Filing govern AOS
 
-Use these exact dates in active_topics when relevant.
+Use these exact dates in climate, visa_bulletin_status, and summaries when relevant.
 
 {content_summary}
 
-URGENCY RULES:
-HIGH: any retrogression, filing methodology switch
-MEDIUM: forward movement under 3 months, no movement in backlogged category
-LOW: forward movement 3+ months, category current
-
-ACTIVE TOPICS RULES:
-- Exactly 3 topics maximum
-- Each must include specific cutoff date from the verified table above
-- Each must include movement magnitude
-- No generic labels
-- Each topic must be factually distinct
-
 Respond with JSON only in this exact format:
 {{
-  "climate": "string",
-  "active_topics": [
-    {{
-      "visa_category": "string",
-      "topic": "string with specific dates and magnitudes",
-      "urgency": "High|Medium|Low"
-    }}
-  ],
-  "federal_register_summary": "string",
-  "visa_bulletin_status": "string",
-  "attorney_action_items": ["string", "string", "string"]
+  "climate": "2-3 sentence summary string",
+  "federal_register_summary": "1-2 sentence string",
+  "visa_bulletin_status": "2-3 sentence string",
+  "attorney_action_items": ["string", "string", "string"],
+  "generated_at": "{generated_at}",
+  "source_count": {len(documents)}
 }}
 """
 
@@ -180,7 +157,7 @@ Respond with JSON only in this exact format:
                 },
                 json={
                     "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 800,
+                    "max_tokens": 600,
                     "system": BRIEF_SYSTEM_PROMPT,
                     "messages": [{"role": "user", "content": user_prompt}],
                 },
@@ -193,15 +170,12 @@ Respond with JSON only in this exact format:
 
         brief = {
             "climate": parsed.get("climate", ""),
-            "active_topics": parsed.get("active_topics", []),
             "federal_register_summary": parsed.get("federal_register_summary", ""),
             "visa_bulletin_status": parsed.get("visa_bulletin_status", ""),
             "attorney_action_items": parsed.get("attorney_action_items", []),
-            "generated_at": generated_at,
-            "source_count": len(documents),
+            "generated_at": parsed.get("generated_at") or generated_at,
+            "source_count": parsed.get("source_count", len(documents)),
         }
-        if not isinstance(brief["active_topics"], list):
-            brief["active_topics"] = []
         if not isinstance(brief["attorney_action_items"], list):
             brief["attorney_action_items"] = []
         return brief

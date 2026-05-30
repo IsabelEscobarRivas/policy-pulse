@@ -73,7 +73,6 @@ header {visibility: hidden;}
     border-radius: 8px;
     padding: 1rem;
     cursor: pointer;
-    min-height: 140px;
 }
 .card-medium {
     background: #f8fafc;
@@ -82,7 +81,6 @@ header {visibility: hidden;}
     border-radius: 8px;
     padding: 1rem;
     cursor: pointer;
-    min-height: 140px;
 }
 .card-low {
     background: #f8fafc;
@@ -91,7 +89,18 @@ header {visibility: hidden;}
     border-radius: 8px;
     padding: 1rem;
     cursor: pointer;
-    min-height: 140px;
+}
+.card-high,
+.card-medium,
+.card-low {
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+.topic-card-column {
+    display: flex;
+    flex-direction: column;
 }
 .card-urgency {
     font-size: 0.75rem;
@@ -441,16 +450,17 @@ def render_topic_card(topic: dict) -> str:
     visa_cat = topic.get("visa_category", "Unknown")
     parts = visa_cat.split(" — ", 1)
     main_cat = parts[0]
-    descriptor = parts[1] if len(parts) > 1 else ""
+    descriptor_label = parts[1] if len(parts) > 1 else ""
     topic_text = topic.get("topic", "")
+    card_body = topic_text
     descriptor_html = ""
-    if descriptor:
-        descriptor_html = f'  <div class="card-topic-label">{descriptor}</div>\n'
+    if descriptor_label:
+        descriptor_html = f'  <div class="card-topic-label">{descriptor_label}</div>\n'
     return f"""
 <div class="{card_class}">
   <div class="card-urgency {urgency_class}">{urgency_label} Priority</div>
   <div class="card-visa">{main_cat}</div>
-{descriptor_html}  <div class="card-topic">{topic_text}</div>
+{descriptor_html}  <div class="card-topic">{card_body}</div>
 </div>
 """
 
@@ -595,13 +605,24 @@ if not topics:
         unsafe_allow_html=True,
     )
 else:
+    urgency_order = {"High": 0, "Medium": 1, "Low": 2}
+    top_3 = sorted(
+        topics[:3],
+        key=lambda x: urgency_order.get(x.get("urgency", "Low"), 2),
+    )
     cols = st.columns(3)
-    for index, topic in enumerate(topics):
-        with cols[index % 3]:
+    for col_idx, topic in enumerate(top_3):
+        topic_idx = topics.index(topic)
+        with cols[col_idx]:
+            st.markdown('<div class="topic-card-column">', unsafe_allow_html=True)
             st.markdown(render_topic_card(topic), unsafe_allow_html=True)
             st.markdown('<div class="card-button-row"></div>', unsafe_allow_html=True)
-            if st.button("Analyze →", key=f"topic_btn_{index}", use_container_width=True):
-                st.session_state.selected_topic_idx = index
+            if st.button(
+                "Analyze →",
+                key=f"card_{topic_idx}",
+                use_container_width=True,
+            ):
+                st.session_state.selected_topic_idx = topic_idx
                 st.session_state.generated_paragraph = ""
                 st.rerun()
 
@@ -659,10 +680,13 @@ if st.session_state.selected_topic_idx is not None and topics:
         )
 
         if st.session_state.generated_paragraph:
+            para_html = st.session_state.generated_paragraph.replace("•", "<br>•")
             st.markdown(
                 f"""
-<div class="gen-para">
-  {st.session_state.generated_paragraph}
+<div style="line-height: 2;
+            font-size: 0.95rem;
+            color: #1e293b;">
+{para_html}
 </div>
 """,
                 unsafe_allow_html=True,

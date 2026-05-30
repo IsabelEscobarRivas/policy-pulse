@@ -13,6 +13,7 @@ from app.detection.engine import (
 )
 from app.interpretation.agent import governance_check, interpret_change
 from app.interpretation.brief_agent import generate_brief
+from app.interpretation.card_agent import generate_cards
 from app.models.regulatory_document import RegulatoryDocument
 from app.models.regulatory_source import RegulatorySource
 from app.normalization.extractor import (
@@ -147,6 +148,13 @@ async def get_regulatory_brief(
             }
 
         brief = await generate_brief(document_payload, attorney_profile)
+
+        visa_type = practice_areas.strip() if practice_areas else "All"
+        nationality = client_nationalities.strip() if client_nationalities else "All"
+
+        cards = await generate_cards(visa_type, nationality)
+        brief["active_topics"] = cards
+
         logger.info(f"Brief generated: source_count={brief.get('source_count')}")
         return brief
     except Exception as e:
