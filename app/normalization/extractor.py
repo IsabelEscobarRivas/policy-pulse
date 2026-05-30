@@ -135,18 +135,41 @@ def normalize_rss_response(xml: str, source_url: str) -> dict:
     }
 
 
-def normalize_html_response(html: str, source_url: str) -> dict:
-    soup = BeautifulSoup(html, "lxml")
+_ILW_STRIP_CLASSES = ("advertisement", "sidebar", "footer", "header", "menu")
 
+
+def _decompose_by_class_names(soup, class_names) -> None:
+    for element in soup.find_all(class_=True):
+        classes = element.get("class") or []
+        if isinstance(classes, str):
+            classes = [classes]
+        if any(
+            any(cls_name in cls or cls in cls_name for cls in classes)
+            for cls_name in class_names
+        ):
+            element.decompose()
+
+
+def _safe_html_defaults(source_url: str) -> dict:
+    return {
+        "title": "",
+        "body": "",
+        "timestamp": datetime.utcnow().isoformat(),
+        "source_url": source_url,
+    }
+
+
+def _normalize_generic_html(soup, source_url: str) -> dict:
     for tag_name in _TAGS_TO_REMOVE:
         for tag in soup.find_all(tag_name):
-            tag.decompose()
+            if tag is not None:
+                tag.decompose()
 
     title = ""
-    if soup.title and soup.title.string:
+    if soup.title is not None and soup.title.string:
         title = soup.title.string.strip()
 
-    body = soup.get_text(separator=" ", strip=True)
+    body = soup.get_text(separator=" ", strip=True) or ""
 
     return {
         "title": title,
@@ -154,6 +177,75 @@ def normalize_html_response(html: str, source_url: str) -> dict:
         "timestamp": _utcnow_isoformat(),
         "source_url": source_url,
     }
+
+
+def _normalize_ilw_html(soup, source_url: str) -> dict:
+    for tag_name in _TAGS_TO_REMOVE:
+        for tag in soup.find_all(tag_name):
+            if tag is not None:
+                tag.decompose()
+
+    _decompose_by_class_names(soup, _ILW_STRIP_CLASSES)
+
+    extracted_items = []
+    headings = soup.find_all(["h1", "h2", "h3", "h4"]) or []
+    for heading in headings:
+        if heading is None:
+            continue
+        headline = heading.get_text(separator=" ", strip=True) or ""
+        if not headline or len(headline) < 10:
+            continue
+
+        lead = ""
+        sibling = heading.find_next_sibling(["p", "div"])
+        if sibling is not None:
+            lead = sibling.get_text(separator=" ", strip=True) or ""
+            if lead:
+                lead = lead.split(". ")[0].strip()
+                if len(lead) > 300:
+                    lead = lead[:300].rstrip() + "..."
+
+        if lead:
+            item = f"{headline} — {lead}"
+        else:
+            item = headline
+
+        if item and item.strip():
+            extracted_items.append(item.strip())
+
+        if len(extracted_items) >= 10:
+            break
+
+    extracted_items = [item for item in extracted_items if item]
+
+    if extracted_items:
+        body = "ILW Immigration News Headlines:\n" + "\n".join(extracted_items)
+    else:
+        body = (soup.get_text(separator=" ", strip=True) or "")[:3000]
+
+    return {
+        "title": "ILW Immigration News",
+        "body": body or "",
+        "timestamp": _utcnow_isoformat(),
+        "source_url": source_url,
+    }
+
+
+def normalize_html_response(html: str, source_url: str) -> dict:
+    try:
+        soup = BeautifulSoup(html or "", "lxml")
+
+        if "ilw.com" in source_url.lower():
+            try:
+                return _normalize_ilw_html(soup, source_url)
+            except Exception:
+                logger.exception("ILW HTML extraction failed; falling back to generic")
+                return _normalize_generic_html(soup, source_url)
+
+        return _normalize_generic_html(soup, source_url)
+    except Exception:
+        logger.exception("normalize_html_response failed for %s", source_url)
+        return _safe_html_defaults(source_url)
 
 
 def compute_hash(content: str) -> str:

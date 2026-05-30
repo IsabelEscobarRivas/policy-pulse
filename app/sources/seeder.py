@@ -1,32 +1,33 @@
 from fastapi import FastAPI
 from sqlalchemy.orm import Session
 
-from app.models import Interpretation, RegulatoryChange
-from app.models.regulatory_document import RegulatoryDocument
 from app.models.regulatory_source import RegulatorySource
-from app.models.retrieval_snapshot import RetrievalSnapshot
 from app.sources.registry import SOURCES
 from app.storage.database import SessionLocal
 
 
 def seed_sources(db: Session) -> None:
-    db.query(Interpretation).delete()
-    db.query(RegulatoryChange).delete()
-    db.query(RetrievalSnapshot).delete()
-    db.query(RegulatoryDocument).delete()
-    db.query(RegulatorySource).delete()
-    db.commit()
-
     for source in SOURCES:
-        db.add(
-            RegulatorySource(
-                source_name=source["source_name"],
-                source_type=source["source_type"],
-                base_url=source["base_url"],
-                retrieval_method=source["retrieval_method"],
-                active=source["active"],
-            )
+        existing = (
+            db.query(RegulatorySource)
+            .filter(RegulatorySource.source_name == source["source_name"])
+            .first()
         )
+        if existing:
+            existing.base_url = source["base_url"]
+            existing.retrieval_method = source["retrieval_method"]
+            existing.source_type = source["source_type"]
+            existing.active = source["active"]
+        else:
+            db.add(
+                RegulatorySource(
+                    source_name=source["source_name"],
+                    source_type=source["source_type"],
+                    base_url=source["base_url"],
+                    retrieval_method=source["retrieval_method"],
+                    active=source["active"],
+                )
+            )
     db.commit()
 
 

@@ -27,16 +27,19 @@ class BrightDataClient:
             return response.json()
 
     async def fetch_unlocker(self, url: str) -> str:
-        async with httpx.AsyncClient() as client:
+        settings = get_settings()
+        async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
-                BASE_URL,
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                "https://api.brightdata.com/request",
+                headers={
+                    "Authorization": f"Bearer {settings.bright_data_api_key}",
+                    "Content-Type": "application/json",
+                },
                 json={
-                    "zone": self.unlocker_zone,
+                    "zone": settings.bright_data_unlocker_zone,
                     "url": url,
                     "format": "raw",
                 },
-                timeout=60.0,
             )
             response.raise_for_status()
             return response.text

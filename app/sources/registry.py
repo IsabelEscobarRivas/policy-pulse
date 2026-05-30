@@ -20,4 +20,11 @@ SOURCES = [
         "retrieval_method": "html",
         "active": True,
     },
+    {
+        "source_name": "ILW Immigration News",
+        "source_type": "immigration_news",
+        "base_url": "https://www.ilw.com",
+        "retrieval_method": "unlocker",
+        "active": True,
+    },
 ]

@@ -12,6 +12,7 @@ from app.detection.engine import (
     summarize_delta,
 )
 from app.interpretation.agent import governance_check, interpret_change
+from app.interpretation.brief_agent import generate_brief
 from app.models.regulatory_document import RegulatoryDocument
 from app.models.regulatory_source import RegulatorySource
 from app.normalization.extractor import (
@@ -107,6 +108,39 @@ async def list_interpretations(db: Session = Depends(get_db)):
     ]
 
 
+@router.get("/brief")
+async def get_regulatory_brief(
+    db: Session = Depends(get_db),
+    practice_areas: str = "",
+    client_nationalities: str = "",
+    active_concern: str = "",
+):
+    documents = (
+        db.query(RegulatoryDocument)
+        .order_by(RegulatoryDocument.retrieved_at.desc())
+        .limit(5)
+        .all()
+    )
+    document_payload = [
+        {"title": doc.title or "Untitled", "content": doc.content or ""}
+        for doc in documents
+    ]
+
+    attorney_profile = None
+    if practice_areas or client_nationalities or active_concern:
+        attorney_profile = {
+            "practice_areas": [
+                p.strip() for p in practice_areas.split(",") if p.strip()
+            ],
+            "client_nationalities": [
+                n.strip() for n in client_nationalities.split(",") if n.strip()
+            ],
+            "active_concern": active_concern.strip(),
+        }
+
+    return await generate_brief(document_payload, attorney_profile)
+
+
 @router.post("/debug/{source_type}")
 async def debug_retrieve(
     source_type: str,
@@ -184,6 +218,9 @@ async def retrieve_source(
         elif source.retrieval_method == "html":
             html = await client.fetch_html(source.base_url)
             normalized = normalize_html_response(html, source.base_url)
+        elif source.retrieval_method == "unlocker":
+            raw = await client.fetch_unlocker(source.base_url)
+            normalized = normalize_html_response(raw, source.base_url)
         else:
             raise HTTPException(
                 status_code=400,
