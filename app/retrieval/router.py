@@ -9,8 +9,9 @@ from app.models.regulatory_document import RegulatoryDocument
 from app.models.regulatory_source import RegulatorySource
 from app.normalization.extractor import (
     compute_hash,
+    normalize_api_response,
     normalize_html_response,
-    normalize_serp_response,
+    normalize_rss_response,
 )
 from app.retrieval.bright_data_client import BrightDataClient, get_bright_data_client
 from app.sources.registry import SOURCES
@@ -58,6 +59,24 @@ async def list_documents(db: Session = Depends(get_db)):
     ]
 
 
+@router.post("/debug/{source_type}")
+async def debug_retrieve(
+    source_type: str,
+    client: BrightDataClient = Depends(get_bright_data_client),
+):
+    source_registry = {
+        "newsroom": "https://www.uscis.gov/newsroom",
+        "policy_manual": "https://www.uscis.gov/policy-manual",
+        "visa_bulletin": "https://travel.state.gov/content/travel/en/legal/visa-law0/visa-bulletin.html",
+    }
+    url = source_registry.get(source_type)
+    if not url:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    response = await client.fetch_serp(url)
+    return response
+
+
 @router.post("/{source_type}")
 async def retrieve_source(
     source_type: str,
@@ -78,11 +97,14 @@ async def retrieve_source(
     start = time.monotonic()
 
     try:
-        if source.retrieval_method == "serp":
-            response = await client.fetch_serp(source.base_url)
-            normalized = normalize_serp_response(response, source.base_url)
-        elif source.retrieval_method == "unlocker":
-            html = await client.fetch_unlocker(source.base_url)
+        if source.retrieval_method == "api":
+            response = await client.fetch_api(source.base_url)
+            normalized = normalize_api_response(response, source.base_url)
+        elif source.retrieval_method == "rss":
+            xml = await client.fetch_rss(source.base_url)
+            normalized = normalize_rss_response(xml, source.base_url)
+        elif source.retrieval_method == "html":
+            html = await client.fetch_html(source.base_url)
             normalized = normalize_html_response(html, source.base_url)
         else:
             raise HTTPException(
