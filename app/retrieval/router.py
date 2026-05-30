@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 
@@ -10,6 +11,7 @@ from app.detection.engine import (
     filter_relevance,
     summarize_delta,
 )
+from app.interpretation.agent import governance_check, interpret_change
 from app.models.regulatory_document import RegulatoryDocument
 from app.models.regulatory_source import RegulatorySource
 from app.normalization.extractor import (
@@ -22,6 +24,8 @@ from app.retrieval.bright_data_client import BrightDataClient, get_bright_data_c
 from app.sources.registry import SOURCES
 from app.storage.change_reader import get_recent_changes
 from app.storage.change_writer import save_change
+from app.storage.interpretation_reader import get_recent_interpretations
+from app.storage.interpretation_writer import save_interpretation
 from app.storage.database import get_db
 from app.storage.writer import save_document
 
@@ -80,6 +84,26 @@ async def list_changes(db: Session = Depends(get_db)):
             "filtered_out": change.filtered_out,
         }
         for change in changes
+    ]
+
+
+@router.get("/interpretations")
+async def list_interpretations(db: Session = Depends(get_db)):
+    interpretations = get_recent_interpretations(db, limit=20)
+    return [
+        {
+            "id": interpretation.id,
+            "change_id": interpretation.change_id,
+            "source_name": interpretation.source_name,
+            "interpreted_at": str(interpretation.interpreted_at),
+            "visa_category": interpretation.visa_category,
+            "change_type_label": interpretation.change_type_label,
+            "summary": interpretation.summary,
+            "evidence_implications": interpretation.evidence_implications,
+            "review_priority": interpretation.review_priority,
+            "governance_flagged": interpretation.governance_flagged,
+        }
+        for interpretation in interpretations
     ]
 
 
@@ -177,6 +201,30 @@ async def retrieve_source(
                 summary,
             )
 
+        interpretation_response = None
+        if (
+            change.change_type == "content_modified"
+            and (change.relevance_score or 0) >= 0.3
+        ):
+            added = json.loads(change.added_sentences or "[]")
+            removed = json.loads(change.removed_sentences or "[]")
+            interpretation, raw_response = await interpret_change(
+                source.source_name,
+                change.delta_summary or "",
+                added,
+                removed,
+            )
+            flagged = governance_check(interpretation)
+            save_interpretation(db, change, interpretation, raw_response, flagged)
+            interpretation_response = {
+                "visa_category": interpretation["visa_category"],
+                "change_type_label": interpretation["change_type_label"],
+                "summary": interpretation["summary"],
+                "evidence_implications": interpretation["evidence_implications"],
+                "review_priority": interpretation["review_priority"],
+                "governance_flagged": flagged,
+            }
+
         logger.info(
             "retrieval complete source_type=%s url=%s content_size=%s hash=%s created=%s time=%.2fs",
             source_type,
@@ -198,6 +246,7 @@ async def retrieve_source(
             "change_type": change.change_type,
             "relevance_score": change.relevance_score,
             "delta_summary": change.delta_summary,
+            "interpretation": interpretation_response,
         }
     except httpx.HTTPStatusError as e:
         logger.error(f"Bright Data request failed: {e}")

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     bright_data_serp_zone: str = "serp_api1"
     bright_data_unlocker_zone: str = "web_unlocker1"
     environment: str = "development"
+    anthropic_api_key: str = ""
 
 
 @lru_cache

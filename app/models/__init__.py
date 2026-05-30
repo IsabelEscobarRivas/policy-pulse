@@ -1,4 +1,5 @@
 from app.models.base import Base
+from app.models.interpretation import Interpretation
 from app.models.regulatory_change import RegulatoryChange
 from app.models.regulatory_document import RegulatoryDocument
 from app.models.regulatory_source import RegulatorySource
@@ -10,4 +11,5 @@ __all__ = [
     "RegulatoryDocument",
     "RetrievalSnapshot",
     "RegulatoryChange",
+    "Interpretation",
 ]
